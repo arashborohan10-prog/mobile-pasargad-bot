@@ -6,6 +6,9 @@ from telebot import types
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 1040416634
 
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
+
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
 # =========================
@@ -18,11 +21,10 @@ cursor = db.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT,
-    name TEXT,
-    description TEXT,
-    price TEXT,
-    photo_id TEXT
+    category TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    photo_id TEXT NOT NULL
 )
 """)
 
@@ -50,18 +52,14 @@ CATEGORIES = {
     "mobile": "📱 موبایل",
     "gadget": "🎮 گجت",
     "massager": "💆 ماساژور",
-    "cable": "🔌 کابل",
+    "cable_charger": "🔌 کابل و شارژر",
     "headphone": "🎧 هدفون",
-    "charger": "⚡ شارژر",
     "handsfree": "🎙 هندزفری",
-    "airpod": "🎧 AirPods",
-    "holder": "🚗 هلدر",
-    "converter": "🔄 تبدیل",
-    "flash": "💾 فلش و رم",
-    "speaker": "🔊 اسپیکر",
-    "keyboard": "🖱 موس و کیبورد",
-    "modem": "📡 مودم اینترنت",
-    "simcard": "📲 سیمکارت"
+    "airpod": "🎧 ایرپاد",
+    "memory": "💾 رم و فلش",
+    "holder": "📌 هولدر",
+    "simcard": "📲 سیمکارت",
+    "other": "📦 متفرقه",
 }
 
 CATEGORY_BY_NAME = {name: key for key, name in CATEGORIES.items()}
@@ -82,7 +80,7 @@ def main_menu(user_id):
         markup.row(*buttons[i:i + 2])
 
     markup.row(
-        types.KeyboardButton("☎️ پشتیبانی و ارتباط با ما")
+        types.KeyboardButton("🛟 پشتیبانی")
     )
 
     if user_id == ADMIN_ID:
@@ -98,12 +96,12 @@ def admin_menu():
 
     markup.row(
         types.KeyboardButton("➕ افزودن محصول"),
-        types.KeyboardButton("🗑 حذف محصول")
+        types.KeyboardButton("🗑 حذف محصول"),
     )
 
     markup.row(
         types.KeyboardButton("✏️ ویرایش محصول"),
-        types.KeyboardButton("☎️ ویرایش پشتیبانی")
+        types.KeyboardButton("☎️ ویرایش پشتیبانی"),
     )
 
     markup.row(
@@ -130,7 +128,6 @@ def category_menu():
 
     return markup
 
-
 # =========================
 # START
 # =========================
@@ -143,23 +140,23 @@ def start(message):
         message.chat.id,
         "🟡 به فروشگاه موبایل پاسارگاد خوش آمدید\n\n"
         "👇 دسته‌بندی مورد نظر خود را انتخاب کنید:",
-        reply_markup=main_menu(message.from_user.id)
+        reply_markup=main_menu(message.from_user.id),
     )
-
 
 # =========================
 # SHOW PRODUCTS
 # =========================
 
 def show_product(chat_id, category, index=0):
+
     cursor.execute(
         """
-        SELECT id, name, description, price, photo_id
+        SELECT id, name, description, photo_id
         FROM products
         WHERE category=?
         ORDER BY id DESC
         """,
-        (category,)
+        (category,),
     )
 
     products = cursor.fetchall()
@@ -167,7 +164,7 @@ def show_product(chat_id, category, index=0):
     if not products:
         bot.send_message(
             chat_id,
-            "❌ در این دسته هنوز محصولی ثبت نشده است."
+            "❌ در این دسته هنوز محصولی ثبت نشده است.",
         )
         return
 
@@ -177,13 +174,11 @@ def show_product(chat_id, category, index=0):
 
     name = product[1]
     description = product[2]
-    price = product[3]
-    photo_id = product[4]
+    photo_id = product[3]
 
     caption = (
         f"🛍 {name}\n\n"
         f"📝 {description}\n\n"
-        f"💰 قیمت: {price}\n\n"
         f"📦 محصول {index + 1} از {len(products)}"
     )
 
@@ -192,21 +187,20 @@ def show_product(chat_id, category, index=0):
     markup.row(
         types.InlineKeyboardButton(
             "⬅️ قبلی",
-            callback_data=f"p|{category}|{index - 1}"
+            callback_data=f"p|{category}|{index - 1}",
         ),
         types.InlineKeyboardButton(
             "بعدی ➡️",
-            callback_data=f"p|{category}|{index + 1}"
-        )
+            callback_data=f"p|{category}|{index + 1}",
+        ),
     )
 
     bot.send_photo(
         chat_id,
         photo_id,
         caption=caption,
-        reply_markup=markup
+        reply_markup=markup,
     )
-
 
 # =========================
 # PRODUCT NAVIGATION
@@ -216,7 +210,8 @@ def show_product(chat_id, category, index=0):
     func=lambda call: call.data.startswith("p|")
 )
 def product_navigation(call):
-    parts = call.data.split("|")
+
+    parts = call.data.split("|", 2)
 
     category = parts[1]
     index = int(parts[2])
@@ -224,36 +219,42 @@ def product_navigation(call):
     try:
         bot.delete_message(
             call.message.chat.id,
-            call.message.message_id
+            call.message.message_id,
         )
-    except:
+    except Exception:
         pass
 
     show_product(
         call.message.chat.id,
         category,
-        index
+        index,
     )
 
     bot.answer_callback_query(call.id)
 
-
 # =========================
-# DELETE CALLBACK
+# DELETE PRODUCT
 # =========================
 
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith("d|")
 )
 def delete_callback(call):
+
     if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(
+            call.id,
+            "⛔ دسترسی ندارید."
+        )
         return
 
-    product_id = int(call.data.split("|")[1])
+    product_id = int(
+        call.data.split("|", 1)[1]
+    )
 
     cursor.execute(
         "DELETE FROM products WHERE id=?",
-        (product_id,)
+        (product_id,),
     )
 
     db.commit()
@@ -263,39 +264,59 @@ def delete_callback(call):
         "✅ محصول حذف شد"
     )
 
-    bot.edit_message_text(
-        "✅ محصول با موفقیت حذف شد.",
-        call.message.chat.id,
-        call.message.message_id
-    )
-
+    try:
+        bot.edit_message_text(
+            "✅ محصول با موفقیت حذف شد.",
+            call.message.chat.id,
+            call.message.message_id,
+        )
+    except Exception:
+        pass
 
 # =========================
-# EDIT CALLBACK
+# EDIT PRODUCT
 # =========================
 
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith("e|")
 )
 def edit_callback(call):
+
     if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(
+            call.id,
+            "⛔ دسترسی ندارید."
+        )
         return
 
-    product_id = int(call.data.split("|")[1])
+    product_id = int(
+        call.data.split("|", 1)[1]
+    )
+
+    cursor.execute(
+        "SELECT id FROM products WHERE id=?",
+        (product_id,),
+    )
+
+    if not cursor.fetchone():
+        bot.answer_callback_query(
+            call.id,
+            "❌ محصول پیدا نشد."
+        )
+        return
 
     user_states[call.from_user.id] = {
         "action": "edit",
         "step": "name",
-        "product_id": product_id
+        "product_id": product_id,
     }
 
     bot.answer_callback_query(call.id)
 
     bot.send_message(
         call.message.chat.id,
-        "✏️ اسم جدید محصول را بفرست:"
+        "✏️ اسم جدید محصول را بفرست:",
     )
-
 
 # =========================
 # TEXT HANDLER
@@ -303,32 +324,37 @@ def edit_callback(call):
 
 @bot.message_handler(content_types=["text"])
 def text_handler(message):
-    text = message.text
+
+    text = message.text.strip()
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    # -------- CANCEL --------
+    # CANCEL
 
     if text == "❌ لغو":
+
         user_states.pop(user_id, None)
 
         bot.send_message(
             chat_id,
             "✅ عملیات لغو شد.",
-            reply_markup=main_menu(user_id)
+            reply_markup=main_menu(user_id),
         )
+
         return
 
-    # -------- MAIN MENU --------
+    # MAIN MENU
 
     if text == "🏠 منوی اصلی":
+
         user_states.pop(user_id, None)
 
         bot.send_message(
             chat_id,
             "🏠 منوی اصلی",
-            reply_markup=main_menu(user_id)
+            reply_markup=main_menu(user_id),
         )
+
         return
 
     # =========================
@@ -336,18 +362,22 @@ def text_handler(message):
     # =========================
 
     if user_id in user_states:
+
         state = user_states[user_id]
 
-        # -------- ADD PRODUCT --------
+        # ADD PRODUCT
 
-        if state["action"] == "add":
+        if state.get("action") == "add":
 
-            if state["step"] == "category":
+            if state.get("step") == "category":
+
                 if text not in CATEGORY_BY_NAME:
+
                     bot.send_message(
                         chat_id,
-                        "❌ یکی از دسته‌بندی‌ها را انتخاب کن."
+                        "❌ یکی از دسته‌بندی‌ها را از دکمه‌ها انتخاب کن.",
                     )
+
                     return
 
                 state["category"] = CATEGORY_BY_NAME[text]
@@ -355,77 +385,64 @@ def text_handler(message):
 
                 bot.send_message(
                     chat_id,
-                    "✏️ اسم محصول را بفرست:"
+                    "✏️ اسم محصول را بفرست:",
                 )
+
                 return
 
-            if state["step"] == "name":
+            if state.get("step") == "name":
+
                 state["name"] = text
                 state["step"] = "description"
 
                 bot.send_message(
                     chat_id,
-                    "📝 مشخصات و توضیحات محصول را بفرست:"
+                    "📝 مشخصات و توضیحات محصول را بفرست:",
                 )
+
                 return
 
-            if state["step"] == "description":
+            if state.get("step") == "description":
+
                 state["description"] = text
-                state["step"] = "price"
-
-                bot.send_message(
-                    chat_id,
-                    "💰 قیمت محصول را بفرست:"
-                )
-                return
-
-            if state["step"] == "price":
-                state["price"] = text
                 state["step"] = "photo"
 
                 bot.send_message(
                     chat_id,
-                    "🖼 حالا عکس محصول را بفرست:"
+                    "🖼 حالا عکس محصول را بفرست:",
                 )
+
                 return
 
-        # -------- EDIT PRODUCT --------
+        # EDIT PRODUCT
 
-        if state["action"] == "edit":
+        if state.get("action") == "edit":
 
-            if state["step"] == "name":
+            if state.get("step") == "name":
+
                 state["name"] = text
                 state["step"] = "description"
 
                 bot.send_message(
                     chat_id,
-                    "📝 مشخصات جدید محصول را بفرست:"
+                    "📝 مشخصات جدید محصول را بفرست:",
                 )
+
                 return
 
-            if state["step"] == "description":
-                state["description"] = text
-                state["step"] = "price"
+            if state.get("step") == "description":
 
-                bot.send_message(
-                    chat_id,
-                    "💰 قیمت جدید محصول را بفرست:"
-                )
-                return
-
-            if state["step"] == "price":
                 cursor.execute(
                     """
                     UPDATE products
-                    SET name=?, description=?, price=?
+                    SET name=?, description=?
                     WHERE id=?
                     """,
                     (
                         state["name"],
-                        state["description"],
                         text,
-                        state["product_id"]
-                    )
+                        state["product_id"],
+                    ),
                 )
 
                 db.commit()
@@ -435,20 +452,23 @@ def text_handler(message):
                 bot.send_message(
                     chat_id,
                     "✅ محصول با موفقیت ویرایش شد.",
-                    reply_markup=admin_menu()
+                    reply_markup=admin_menu(),
                 )
+
                 return
 
-        # -------- SUPPORT --------
+        # SUPPORT
 
-        if state["action"] == "support":
+        if state.get("action") == "support":
+
             cursor.execute(
                 """
-                UPDATE settings
-                SET value=?
-                WHERE key='support'
+                INSERT INTO settings (key, value)
+                VALUES ('support', ?)
+                ON CONFLICT(key)
+                DO UPDATE SET value=excluded.value
                 """,
-                (text,)
+                (text,),
             )
 
             db.commit()
@@ -458,8 +478,9 @@ def text_handler(message):
             bot.send_message(
                 chat_id,
                 "✅ اطلاعات پشتیبانی ذخیره شد.",
-                reply_markup=admin_menu()
+                reply_markup=admin_menu(),
             )
+
             return
 
     # =========================
@@ -467,122 +488,167 @@ def text_handler(message):
     # =========================
 
     if text == "🔐 پنل مدیریت":
+
         if user_id != ADMIN_ID:
+
+            bot.send_message(
+                chat_id,
+                "⛔ دسترسی به پنل مدیریت ندارید.",
+            )
+
             return
 
         bot.send_message(
             chat_id,
             "🔐 پنل مدیریت موبایل پاسارگاد",
-            reply_markup=admin_menu()
+            reply_markup=admin_menu(),
         )
+
         return
 
-    # -------- ADD PRODUCT --------
+    # ADD PRODUCT
 
-    if text == "➕ افزودن محصول" and user_id == ADMIN_ID:
+    if (
+        text == "➕ افزودن محصول"
+        and user_id == ADMIN_ID
+    ):
+
         user_states[user_id] = {
             "action": "add",
-            "step": "category"
+            "step": "category",
         }
 
         bot.send_message(
             chat_id,
             "📂 دسته‌بندی محصول را انتخاب کن:",
-            reply_markup=category_menu()
+            reply_markup=category_menu(),
         )
+
         return
 
-    # -------- DELETE PRODUCT --------
+    # DELETE PRODUCT
 
-    if text == "🗑 حذف محصول" and user_id == ADMIN_ID:
+    if (
+        text == "🗑 حذف محصول"
+        and user_id == ADMIN_ID
+    ):
+
         cursor.execute(
-            "SELECT id, name FROM products ORDER BY id DESC"
+            """
+            SELECT id, name
+            FROM products
+            ORDER BY id DESC
+            """
         )
 
         products = cursor.fetchall()
 
         if not products:
+
             bot.send_message(
                 chat_id,
-                "❌ محصولی برای حذف وجود ندارد."
+                "❌ محصولی برای حذف وجود ندارد.",
             )
+
             return
 
         markup = types.InlineKeyboardMarkup()
 
         for product_id, name in products:
+
             markup.row(
                 types.InlineKeyboardButton(
                     f"🗑 {name}",
-                    callback_data=f"d|{product_id}"
+                    callback_data=f"d|{product_id}",
                 )
             )
 
         bot.send_message(
             chat_id,
             "محصول مورد نظر برای حذف را انتخاب کن:",
-            reply_markup=markup
+            reply_markup=markup,
         )
+
         return
 
-    # -------- EDIT PRODUCT --------
+    # EDIT PRODUCT
 
-    if text == "✏️ ویرایش محصول" and user_id == ADMIN_ID:
+    if (
+        text == "✏️ ویرایش محصول"
+        and user_id == ADMIN_ID
+    ):
+
         cursor.execute(
-            "SELECT id, name FROM products ORDER BY id DESC"
+            """
+            SELECT id, name
+            FROM products
+            ORDER BY id DESC
+            """
         )
 
         products = cursor.fetchall()
 
         if not products:
+
             bot.send_message(
                 chat_id,
-                "❌ محصولی برای ویرایش وجود ندارد."
+                "❌ محصولی برای ویرایش وجود ندارد.",
             )
+
             return
 
         markup = types.InlineKeyboardMarkup()
 
         for product_id, name in products:
+
             markup.row(
                 types.InlineKeyboardButton(
                     f"✏️ {name}",
-                    callback_data=f"e|{product_id}"
+                    callback_data=f"e|{product_id}",
                 )
             )
 
         bot.send_message(
             chat_id,
             "محصول مورد نظر برای ویرایش را انتخاب کن:",
-            reply_markup=markup
+            reply_markup=markup,
         )
+
         return
 
-    # -------- SUPPORT EDIT --------
+    # SUPPORT EDIT
 
-    if text == "☎️ ویرایش پشتیبانی" and user_id == ADMIN_ID:
+    if (
+        text == "☎️ ویرایش پشتیبانی"
+        and user_id == ADMIN_ID
+    ):
+
         user_states[user_id] = {
-            "action": "support"
+            "action": "support",
         }
 
         bot.send_message(
             chat_id,
-            "☎️ اطلاعات جدید پشتیبانی را کامل بفرست.\n\n"
+            "☎️ اطلاعات پشتیبانی را کامل بفرست.\n\n"
             "مثلاً:\n"
             "☎️ تماس: 09...\n"
             "💬 واتساپ: 09...\n"
             "📷 اینستاگرام: @...\n"
-            "📍 آدرس: ..."
+            "📍 آدرس: ...",
         )
+
         return
 
-    # =========================
-    # SUPPORT FOR CUSTOMERS
-    # =========================
+    # SUPPORT
 
-    if text == "☎️ پشتیبانی و ارتباط با ما":
+    if text == "🛟 پشتیبانی":
+
         cursor.execute(
-            "SELECT value FROM settings WHERE key='support'"
+            """
+            SELECT value
+            FROM settings
+            WHERE key='support'
+            """
         )
 
         result = cursor.fetchone()
@@ -590,28 +656,26 @@ def text_handler(message):
         support_text = (
             result[0]
             if result
-            else "اطلاعات پشتیبانی ثبت نشده است."
+            else "☎️ اطلاعات پشتیبانی هنوز تنظیم نشده است."
         )
 
         bot.send_message(
             chat_id,
-            support_text
+            support_text,
         )
+
         return
 
-    # =========================
-    # CUSTOMER CATEGORIES
-    # =========================
+    # CATEGORIES
 
     if text in CATEGORY_BY_NAME:
-        category = CATEGORY_BY_NAME[text]
 
         show_product(
             chat_id,
-            category
+            CATEGORY_BY_NAME[text],
         )
-        return
 
+        return
 
 # =========================
 # PHOTO HANDLER
@@ -619,33 +683,34 @@ def text_handler(message):
 
 @bot.message_handler(content_types=["photo"])
 def photo_handler(message):
+
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    if user_id not in user_states:
-        return
+    state = user_states.get(user_id)
 
-    state = user_states[user_id]
+    if not state:
+        return
 
     if (
         state.get("action") == "add"
         and state.get("step") == "photo"
     ):
+
         photo_id = message.photo[-1].file_id
 
         cursor.execute(
             """
             INSERT INTO products
-            (category, name, description, price, photo_id)
-            VALUES (?, ?, ?, ?, ?)
+            (category, name, description, photo_id)
+            VALUES (?, ?, ?, ?)
             """,
             (
                 state["category"],
                 state["name"],
                 state["description"],
-                state["price"],
-                photo_id
-            )
+                photo_id,
+            ),
         )
 
         db.commit()
@@ -655,9 +720,8 @@ def photo_handler(message):
         bot.send_message(
             chat_id,
             "✅ محصول با موفقیت اضافه شد.",
-            reply_markup=admin_menu()
+            reply_markup=admin_menu(),
         )
-
 
 # =========================
 # RUN
@@ -668,5 +732,5 @@ print("Mobile Pasargad Bot is running...")
 bot.infinity_polling(
     timeout=60,
     long_polling_timeout=60,
-    skip_pending=True
+    skip_pending=True,
 )
