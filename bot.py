@@ -132,18 +132,8 @@ SUBMENUS = {
         ),
 
         (
-            "📱 Vocal",
-            "vocal"
-        ),
-
-        (
             "🔷 Nokia",
             "nokia"
-        ),
-
-        (
-            "🟢 Realme",
-            "realme"
         ),
     ],
 
@@ -402,40 +392,12 @@ def infer_mobile_brand(
 
         for x in [
 
-            "vocal",
-            "وکال"
-        ]
-    ):
-
-        return "vocal"
-
-
-    if any(
-
-        x in n
-
-        for x in [
-
             "nokia",
             "نوکیا"
         ]
     ):
 
         return "nokia"
-
-
-    if any(
-
-        x in n
-
-        for x in [
-
-            "realme",
-            "ریلمی"
-        ]
-    ):
-
-        return "realme"
 
 
     return ""
@@ -475,6 +437,20 @@ def init_db():
 
                 created_at DATETIME
                 DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT DEFAULT '',
+                first_name TEXT DEFAULT '',
+                last_name TEXT DEFAULT '',
+                first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -660,6 +636,70 @@ def is_admin(
         ==
         ADMIN_ID
     )
+
+
+def register_user(user):
+    if not user:
+        return
+
+    with db_lock:
+        conn = db()
+        conn.execute(
+            """
+            INSERT INTO bot_users(
+                user_id, username, first_name, last_name
+            )
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name,
+                last_name=excluded.last_name,
+                last_seen=CURRENT_TIMESTAMP
+            """,
+            (
+                user.id,
+                user.username or "",
+                user.first_name or "",
+                user.last_name or ""
+            )
+        )
+        conn.commit()
+        conn.close()
+
+
+def users_report():
+    with db_lock:
+        conn = db()
+        rows = conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name, first_seen, last_seen
+            FROM bot_users
+            ORDER BY last_seen DESC
+            """
+        ).fetchall()
+        conn.close()
+
+    text = f"👥 <b>کاربران ربات</b>\n\nتعداد کاربران ثبت‌شده: <b>{len(rows)}</b>"
+    if not rows:
+        return text + "\n\nهنوز کاربری ثبت نشده است."
+
+    parts = [text]
+    for i, row in enumerate(rows[:50], 1):
+        name = " ".join(
+            x for x in [row["first_name"] or "", row["last_name"] or ""] if x
+        ).strip() or "بدون نام"
+        username = f'@{row["username"]}' if row["username"] else "ندارد"
+        parts.append(
+            f'\n{i}) <b>{html.escape(name)}</b>'
+            f'\n🆔 <code>{row["user_id"]}</code>'
+            f'\n👤 {html.escape(username)}'
+            f'\n🕒 آخرین فعالیت: {row["last_seen"]}'
+        )
+
+    if len(rows) > 50:
+        parts.append(f"\n\n… و {len(rows) - 50} کاربر دیگر")
+
+    return "\n".join(parts)
 
 
 def get_setting(
@@ -1230,6 +1270,12 @@ def admin_keyboard():
         "📋 لیست محصولات",
 
         "📞 ویرایش پشتیبانی"
+    )
+
+
+    kb.row(
+
+        "👥 کاربران ربات"
     )
 
 
@@ -2322,6 +2368,8 @@ specs را فارسی، کوتاه و کاربردی در 3 تا 6 خط بنوی
 def start(
     message
 ):
+
+    register_user(message.from_user)
 
     state.pop(
 
@@ -3993,6 +4041,8 @@ def text_handler(
     message
 ):
 
+    register_user(message.from_user)
+
     uid = (
         message.from_user.id
     )
@@ -4179,6 +4229,21 @@ def text_handler(
                 )
         )
 
+
+        return
+
+
+    # ======================================
+    # کاربران ربات
+    # ======================================
+
+    if text == "👥 کاربران ربات":
+
+        bot.send_message(
+            message.chat.id,
+            users_report(),
+            reply_markup=admin_keyboard()
+        )
 
         return
 
